@@ -1,0 +1,72 @@
+<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#888}canvas{display:block}</style></head>
+<body><canvas id="c" width="780" height="1688"></canvas>
+<script>
+const FOAM_FS=/*FOAM*/;
+const FLOOR_FS=/*FLOOR*/;
+const D=/*DATA*/;
+const gl=document.getElementById('c').getContext('webgl2',{antialias:true});
+window.errors=[];
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){window.errors.push(gl.getShaderInfoLog(s)+'\n'+src.split('\n').map((l,i)=>(i+1)+': '+l).join('\n'));}return s;}
+function prog(vs,fs){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,vs));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))window.errors.push(gl.getProgramInfoLog(p));return p;}
+const VS=`#version 300 es
+in vec3 aPos; in vec3 aN; in vec3 aRest; in vec2 aCol;
+uniform mat4 uVP;
+out vec3 vWS; out vec3 vN; out vec3 vRest; out vec4 vCol;
+void main(){ vWS=aPos; vN=aN; vRest=aRest; vCol=vec4(aCol.x,aCol.y,0.,1.);
+  gl_Position=uVP*vec4(aPos.x,aPos.y,-aPos.z,1.); }`;
+const FOAM_MAIN=FOAM_FS+`
+in vec3 vWS; in vec3 vN; in vec3 vRest; in vec4 vCol; out vec4 o;
+void main(){ SqVaryings i; i.positionCS=vec4(0.); i.positionWS=vWS; i.normalWS=vN; i.rest=vRest; i.color=vCol;
+ vec4 c=SqFrag(i); o=vec4(pow(max(c.rgb,0.),vec3(1./2.2)),1.); }`;
+const FLOOR_MAIN=FLOOR_FS+`
+in vec3 vWS; in vec3 vN; in vec3 vRest; in vec4 vCol; out vec4 o;
+void main(){ vec4 c=FloorColor(vWS); o=vec4(pow(max(c.rgb,0.),vec3(1./2.2)),1.); }`;
+const pFoam=prog(VS,FOAM_MAIN), pFloor=prog(VS,FLOOR_MAIN);
+
+function normals(P,T){const N=new Float32Array(P.length);for(let i=0;i<T.length;i+=3){const a=T[i]*3,b=T[i+1]*3,c=T[i+2]*3;
+ const ux=P[b]-P[a],uy=P[b+1]-P[a+1],uz=P[b+2]-P[a+2],vx=P[c]-P[a],vy=P[c+1]-P[a+1],vz=P[c+2]-P[a+2];
+ const nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx; for(const k of[a,b,c]){N[k]+=nx;N[k+1]+=ny;N[k+2]+=nz;}}
+ for(let i=0;i<N.length;i+=3){const l=Math.hypot(N[i],N[i+1],N[i+2])||1;N[i]/=l;N[i+1]/=l;N[i+2]/=l;}return N;}
+function buf(data,loc,size,p){const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);const l=gl.getAttribLocation(p,loc);if(l>=0){gl.enableVertexAttribArray(l);gl.vertexAttribPointer(l,size,gl.FLOAT,false,0,0);}}
+function setU(p,U){for(const k in U){const l=gl.getUniformLocation(p,k);if(!l)continue;const v=U[k];if(Array.isArray(v)){if(v.length==4)gl.uniform4fv(l,v);else if(v.length==3)gl.uniform3fv(l,v);}else gl.uniform1f(l,v);}}
+// ---- StudioStage と同じカメラ計算 ----
+const R=D.rest; let mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9],fmn=[1e9,1e9],fmx=[-1e9,-1e9];
+for(let i=0;i<R.length;i+=3){for(let k=0;k<3;k++){mn[k]=Math.min(mn[k],R[i+k]);mx[k]=Math.max(mx[k],R[i+k]);}
+ if(R[i+1]<0.25){fmn=[Math.min(fmn[0],R[i]),Math.min(fmn[1],R[i+2])];fmx=[Math.max(fmx[0],R[i]),Math.max(fmx[1],R[i+2])];}}
+const center=[(mn[0]+mx[0])/2,(mn[1]+mx[1])/2,(mn[2]+mx[2])/2], ext=[(mx[0]-mn[0])/2,(mx[1]-mn[1])/2,(mx[2]-mn[2])/2];
+const FOV=26, EL=56*Math.PI/180, FILL=0.97, VOFF=0.06, aspect=780/1688;
+const vHalf=FOV/2*Math.PI/180, hHalf=Math.atan(Math.tan(vHalf)*aspect);
+const halfW=Math.max(ext[0],ext[2]*0.8)/FILL; const distH=halfW/Math.tan(hHalf)+ext[1];
+const halfH=(ext[2]*Math.sin(EL)+ext[1])/FILL; const dist=Math.max(distH,halfH/Math.tan(vHalf));
+const fwd=[0,-Math.sin(EL),Math.cos(EL)], up=[0,Math.cos(EL),Math.sin(EL)];
+const cam=[0,1,2].map(k=>center[k]-fwd[k]*dist-up[k]*(VOFF*2*dist*Math.tan(vHalf)));
+window.ZOOM=window.ZOOM||1;
+function vp(zoom,look){ // GL 空間（z 反転）での view-projection
+ const e=[cam[0],cam[1],-cam[2]], f=[fwd[0],fwd[1],-fwd[2]], u=[up[0],up[1],-up[2]];
+ let eye=e; if(look){eye=[look[0]-f[0]*dist/zoom, look[1]-f[1]*dist/zoom, -look[2]-f[2]*dist/zoom];}
+ const s=[f[1]*u[2]-f[2]*u[1],f[2]*u[0]-f[0]*u[2],f[0]*u[1]-f[1]*u[0]];
+ const V=[s[0],u[0],-f[0],0, s[1],u[1],-f[1],0, s[2],u[2],-f[2],0, -(s[0]*eye[0]+s[1]*eye[1]+s[2]*eye[2]), -(u[0]*eye[0]+u[1]*eye[1]+u[2]*eye[2]), (f[0]*eye[0]+f[1]*eye[1]+f[2]*eye[2]),1];
+ const n=0.1,fa=200,t=1/Math.tan(vHalf);
+ const Pm=[t/aspect,0,0,0, 0,t,0,0, 0,0,(fa+n)/(n-fa),-1, 0,0,2*fa*n/(n-fa),0];
+ const M=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++){let x=0;for(let k=0;k<4;k++)x+=Pm[k*4+r]*V[c*4+k];M[c*4+r]=x;}return M;}
+const key=[-0.45,0.82,-0.38];const kl=Math.hypot(...key);
+const floorU=Object.assign({},D.floor,{_ShadowCenter:[(fmn[0]+fmx[0])/2,(fmn[1]+fmx[1])/2,0,0],_ShadowHalfSize:[(fmx[0]-fmn[0])/2,(fmx[1]-fmn[1])/2,0,0],
+ _ShadowOffset:[-key[0]/kl*ext[1]*2*0.35,-key[2]/kl*ext[1]*2*0.35,0,0],_Center:[(fmn[0]+fmx[0])/2,(fmn[1]+fmx[1])/2,0,0]});
+const foamU=Object.assign({},D.foam,{_KeyDir:[key[0]/kl,key[1]/kl,key[2]/kl,0]});
+function draw(name,zoom,look){
+ const fr=D.frames[name]; const P=new Float32Array(fr.pos); const N=normals(P,D.tris);
+ gl.viewport(0,0,780,1688);gl.clearColor(0.93,0.93,0.935,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);
+ const M=vp(zoom||1,look);
+ // floor
+ gl.useProgram(pFloor); const vaoF=gl.createVertexArray();gl.bindVertexArray(vaoF);
+ buf(new Float32Array([-30,0,-30, 30,0,-30, 30,0,30, -30,0,-30, 30,0,30, -30,0,30]),'aPos',3,pFloor);
+ gl.uniformMatrix4fv(gl.getUniformLocation(pFloor,'uVP'),false,M); setU(pFloor,floorU); gl.drawArrays(gl.TRIANGLES,0,6);
+ // foam
+ gl.useProgram(pFoam); const vao=gl.createVertexArray();gl.bindVertexArray(vao);
+ buf(P,'aPos',3,pFoam);buf(N,'aN',3,pFoam);buf(new Float32Array(D.rest),'aRest',3,pFoam);buf(new Float32Array(fr.col),'aCol',2,pFoam);
+ const ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(D.tris),gl.STATIC_DRAW);
+ gl.uniformMatrix4fv(gl.getUniformLocation(pFoam,'uVP'),false,M); gl.uniform3fv(gl.getUniformLocation(pFoam,'uCam'),cam); setU(pFoam,foamU);
+ gl.drawElements(gl.TRIANGLES,D.tris.length,gl.UNSIGNED_INT,0);
+}
+window.draw=draw;
+</script></body></html>

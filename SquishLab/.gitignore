@@ -1,0 +1,30 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+crashlytics-buildid.txt
+
+# IDE が生成するプロジェクトファイル（ルート直下のみ。Tests/*.csproj は残す）
+/*.csproj
+/*.sln
+/*.slnx
+.vs/
+.vscode/
+.idea/
+
+# dotnet テスト
+/Tests/bin/
+/Tests/obj/
+
+# macOS
+.DS_Store
